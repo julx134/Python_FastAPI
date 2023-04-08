@@ -20,10 +20,36 @@ class MineItem(BaseModel):
     y: str
 
 
+map_row = ''
+map_col = ''
+map_list = list()
+mines_list = {}
+init = False
+
+
 @app.get("/map")
 def get_map():
     row, col, map_file = get_map_file()
     return {"row": row, "col": col, "map": map_file}
+
+
+@app.put("/reset_map")
+def reset_map():
+    global map_row
+    map_row = 10
+    global map_col
+    map_col = 10
+    global map_list
+    map_list = [["0", "0", "0", "0", "0", "0", "0", "0", "0", "0"], ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0"],
+                ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0"], ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0"],
+                ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0"], ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0"],
+                ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0"], ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0"],
+                ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0"], ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0"]]
+
+    global mines_list
+    mines_list = {}
+
+    return {"row": map_row, "col": map_col, "map": map_list, 'mines': mines_list}
 
 
 @app.put("/map", response_model=MapItem)
@@ -56,17 +82,24 @@ def update_map(item: MapItem):
                 row_element.append('0')
 
     # write to map
-    write_to_map_file(map_file, data)
+    global map_list
+    global map_row
+    global map_col
+    map_col = col
+    map_row = row
+    map_list = map_file
 
     return {"row": data['row'], "col": data['col'], "map": map_file}
 
 
 @app.post("/mines")
 def create_mine(item: MineItem):
+    global map_list
+
     # unpack data
     data = jsonable_encoder(item)
 
-    map_row, map_col, map_list = get_map_file()
+    map_row, map_col, map_file = get_map_file()
     x = int(data['x'])
     y = int(data['y'])
 
@@ -75,50 +108,70 @@ def create_mine(item: MineItem):
         raise HTTPException(status_code=400, detail="Invalid request. Invalid coordinates")
 
     # check if mine already exists in map
-    if map_list[x][y] != '0':
+    if map_file[x][y] != '0':
         raise HTTPException(status_code=400, detail="Invalid request. Mine already exists at coordinate")
 
     # generate random id
     mine_id = str(uuid.uuid4())[:8]
 
     # write to file
-    write_mines_to_file(mine_id, data['serial_no'], data['x'], data['y'])
+    global mines_list
+    mines_list[mine_id] = {"id": mine_id, 'serial_no': data['serial_no'], "x": x, "y": y}
 
     # write to map
-    map_list[x][y] = '1'
-    data_map = {"row": str(map_row), "col": str(map_col)}
-    write_to_map_file(map_list, data_map)
+    map_file[x][y] = '1'
+    map_list = map_file
 
     return {"mine_id": mine_id, "serial_no": data['serial_no'], "x": data['x'], "y": data['y']}
 
 
 @app.get("/mines")
 def get_mines():
-    return get_mines_file()
+    global mines_list
+    if len(mines_list) == 0:
+        return {"data": 'no mines found'}
+
+    return mines_list
 
 
 @app.get("/mines/{mine_id}")
 def get_mine_by_id(mine_id: str):
-    mines = get_mines_file()
+    global mines_list
 
-    return mines[mine_id]
+    if mine_id not in mines_list.keys():
+        return {"data": "no mines found with specified ID"}
+
+    return mines_list[mine_id]
 
 
 def get_map_file():
-    with open("map.txt") as file:
-        # get dimensions
-        dim = file.readline().split()
-        row = int(dim[0])
-        col = int(dim[1])
+    global init
+    global map_row
+    global map_col
+    global map_list
 
-        # format map as array of string
-        map_file = list()
-        for line in file:
-            map_file.append(line.split())
+    if not init:
+        init = True
+        map_row = 10
+        map_col = 10
+        map_list = [["0", "0", "0", "0", "0", "0", "0", "0", "0", "0"],
+                    ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0"],
+                    ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0"],
+                    ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0"],
+                    ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0"],
+                    ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0"],
+                    ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0"],
+                    ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0"],
+                    ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0"],
+                    ["0", "0", "0", "0", "0", "0", "0", "0", "0", "0"]]
 
-    return row, col, map_file
+    return map_row, map_col, map_list
 
 
+
+# <----------------- old functions (to be deleted..) ------------------>
+
+"""
 def write_mines_to_file(mine_id, serial_no, x, y):
     mines_data = get_mines_file()
 
@@ -139,7 +192,30 @@ def write_mines_to_file(mine_id, serial_no, x, y):
             txt_file.write(" ".join(line) + '\n')
 
 
-def get_mines_file():
+def write_to_map_file(map_file, data, test):
+    absolute_path = os.path.dirname(__file__)
+    with open(os.path.join(absolute_path, 'map.txt'), 'w+') as txt_file:
+        txt_file.write(" ".join([data['row'], data['col']]) + '\n')
+        for line in map_file:
+            txt_file.write(" ".join(line) + '\n')
+
+
+def get_map_file():
+    with open("map.txt") as file:
+        # get dimensions
+        dim = file.readline().split()
+        row = int(dim[0])
+        col = int(dim[1])
+
+        # format map as array of string
+        map_file = list()
+        for line in file:
+            map_file.append(line.split())
+
+    return row, col, map_file
+
+
+def get_mines_file(test):
     with open("mines.txt") as file:
         # format map as array of string
         mine_list = {}
@@ -148,30 +224,4 @@ def get_mines_file():
             data = {"id": line_data[0], 'serial_no': line_data[1], "x": line_data[2], "y": line_data[3]}
             mine_list[line_data[0]] = data
     return mine_list
-
-
-def write_to_map_file(map_file, data):
-    absolute_path = os.path.dirname(__file__)
-    with open(os.path.join(absolute_path, 'map.txt'), 'w+') as txt_file:
-        txt_file.write(" ".join([data['row'], data['col']]) + '\n')
-        for line in map_file:
-            txt_file.write(" ".join(line) + '\n')
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+"""
