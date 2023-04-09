@@ -15,9 +15,9 @@ class MapItem(BaseModel):
 
 
 class MineItem(BaseModel):
-    serial_no: str
-    x: str
-    y: str
+    serial_no: str = ""
+    x: str = ""
+    y: str = ""
 
 
 map_row = ''
@@ -99,6 +99,9 @@ def create_mine(item: MineItem):
     # unpack data
     data = jsonable_encoder(item)
 
+    if data['x'] == '' or data['y'] == '' or data['serial_no'] == '':
+        raise HTTPException(status_code=400, detail="Invalid request. Invalid parameters")
+
     map_row, map_col, map_file = get_map_file()
     x = int(data['x'])
     y = int(data['y'])
@@ -129,9 +132,9 @@ def create_mine(item: MineItem):
 def get_mines():
     global mines_list
     if len(mines_list) == 0:
-        return {"data": 'no mines found'}
+        return {"data": 'no mines listed'}
 
-    return mines_list
+    return {"mines": mines_list}
 
 
 @app.get("/mines/{mine_id}")
@@ -141,8 +144,63 @@ def get_mine_by_id(mine_id: str):
     if mine_id not in mines_list.keys():
         return {"data": "no mines found with specified ID"}
 
-    return mines_list[mine_id]
+    return {"mine": mine_id}
 
+
+@app.delete("/mines/{mine_id}")
+def delete_mine_by_id(mine_id: str):
+    global mines_list
+    global map_list
+
+    if mine_id not in mines_list.keys():
+        return {"data": "no mines found with specified ID"}
+
+    # update map
+    x = mines_list[mine_id]['x']
+    y = mines_list[mine_id]['y']
+    map_list[x][y] = '0'
+
+    # delete mine
+    del mines_list[mine_id]
+
+    return {"deleted": "Success", "mines": mines_list}
+
+
+@app.put("/mines/{mine_id}")
+def update_mine(mine_id: str, item: MineItem):
+    global mines_list
+    global map_list
+    global map_row
+    global map_col
+
+    # unpack data
+    data = jsonable_encoder(item)
+
+    if mine_id not in mines_list.keys():
+        return {"data": "no mines found with specified ID"}
+
+    # remove mine from map
+    row = int(mines_list[mine_id]['x'])
+    col = int(mines_list[mine_id]['y'])
+    map_list[row][col] = '0'
+
+    if data['x'] != '':
+        if 0 <= int(data['x']) < int(map_row):
+            mines_list[mine_id]['x'] = int(data['x'])
+            row = data['x']
+
+    if data['y'] != '':
+        if 0 <= int(data['y']) < int(map_col):
+            mines_list[mine_id]['y'] = int(data['y'])
+            col = data['y']
+
+    if data['serial_no'] != '':
+        mines_list[mine_id]['serial_no'] = data['serial_no']
+
+    # add mine back to map
+    map_list[int(row)][int(col)] = '1'
+
+    return {"Update": "success", 'mine': mines_list[mine_id]}
 
 def get_map_file():
     global init
