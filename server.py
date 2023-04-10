@@ -1,9 +1,10 @@
+from hashlib import sha256
 from typing import Union
 from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException
 from fastapi.encoders import jsonable_encoder
-import os
 import uuid
+import copy
 
 app = FastAPI()
 
@@ -24,6 +25,7 @@ map_row = ''
 map_col = ''
 map_list = list()
 mines_list = {}
+rover_list = {}
 init = False
 
 
@@ -202,6 +204,79 @@ def update_mine(mine_id: str, item: MineItem):
 
     return {"Update": "success", 'mine': mines_list[mine_id]}
 
+
+@app.post("/rovers")
+def create_rover(commands: str):
+    global rover_list
+
+    # generate random id
+    rover_id = str(uuid.uuid4())[:8]
+
+    data = {"rover_id": rover_id, "commands": commands, "status": "Not Started"}
+
+    rover_list[rover_id] = data
+
+    return rover_list[rover_id]
+
+
+@app.get("/rovers")
+def get_rovers():
+    global rover_list
+    
+    return {'rovers': rover_list}
+
+
+@app.get("/rovers/{rover_id}")
+def get_rover_by_id(rover_id: str):
+    global rover_list
+
+    if rover_id not in rover_list.keys():
+        return {"data": "no rovers found with specified ID"}
+
+    return {"rovers": rover_list[rover_id]}
+
+
+@app.delete("/rovers/{rover_id}")
+def delete_rover_by_id(rover_id: str):
+    global rover_list
+
+    if rover_id not in rover_list.keys():
+        return {"data": "no rovers found with specified ID"}
+
+    # delete rover
+    del rover_list[rover_id]
+
+    return {"deleted": "Success", "rovers": rover_list}
+
+
+@app.put("/rovers/{rover_id}")
+def change_rover_state(rover_id: str, commands: str | None):
+    global rover_list
+
+    if rover_id not in rover_list.keys():
+        return {"data": "no rovers found with specified ID"}
+
+    rover = rover_list[rover_id]
+    if rover['status'] != "Not Started" and rover['status'] != "Finished":
+        return {"data": "rover status not applicable"}
+
+    rover_list[rover_id]['commands'] = commands
+    return {"rovers":  rover_list[rover_id]}
+
+
+@app.post("/rovers/{rover_id}/dispatch")
+def dispatch_rover(rover_id: str):
+    global rover_list
+
+    if rover_id not in rover_list.keys():
+        return {"data": "no rovers found with specified ID"}
+
+    if rover_list[rover_id]['status'] == "Not Started":
+        return rover_execute_command(rover_id)
+    else:
+        return {"data": "rover status not applicable"}
+
+
 def get_map_file():
     global init
     global map_row
@@ -226,6 +301,120 @@ def get_map_file():
     return map_row, map_col, map_list
 
 
+def rover_execute_command(rover_id):
+    global map_list
+    global map_row
+    global map_col
+    global mines_list
+    global rover_list
+
+    # change rover status to Moving
+    rover_list[rover_id]['status'] = 'Moving'
+
+    # copy map to list -- this is so we don't have to write to map.txt directly
+    rover_map = copy.deepcopy(map_list)
+
+    # initialize path map for rover
+    path = [['0' for x in range(map_col)] for j in range(map_row)]
+
+    # dictionary to track rover position
+    rover_pos = {'x': 0, 'y': 0, 'dir': 'S'}
+
+    i = 0
+    outer_x_bounds = map_row - 1
+    outer_y_bounds = map_col - 1
+    x = rover_pos['x']
+    y = rover_pos['y']
+    path[x][y] = '*'
+
+    disarmed_mines = list()
+    rover = rover_list[rover_id]
+    # for loop and match-case statements that handle rover movement
+    for move in rover['commands']:
+        dig_move = False
+        # if rover finds a mine and doesnt dig, it explodes
+        if int(rover_map[x][y]) > 0 and move != 'D':
+            rover_list[rover_id]['status'] = 'Eliminated'
+            path[x][y] = 'X'
+            return {"data": {"rover_map": path, "rover": rover_list[rover_id], "disarmed_mines": disarmed_mines}}
+
+        # otherwise add diffused mines to disarmed mines
+        if int(rover_map[x][y]) > 0 and move == 'D':
+            # get mine location and update map
+            rover_map[x][y] = '0'
+
+            # get serial mine number
+            serial_no = ''
+            for mine_id in mines_list:
+                if mines_list[mine_id]['x'] == x and mines_list[mine_id]['y'] == y:
+                    serial_no = mines_list[mine_id]['serial_no']
+                    break
+
+            # diffuse mine
+            pin, hash_ = disarm_mine(serial_no)
+            dig_move = True
+            disarmed_mines.append({'pin': pin, 'hash': hash_, 'x': x, 'y': y})
+
+        match move:
+            case 'M':  # move forward
+                match rover_pos['dir']:
+                    case 'S':
+                        if rover_pos['x'] + 1 <= outer_x_bounds:
+                            rover_pos['x'] += 1
+                    case 'N':
+                        if rover_pos['x'] - 1 >= 0:
+                            rover_pos['x'] -= 1
+                    case 'W':
+                        if rover_pos['y'] - 1 >= 0:
+                            rover_pos['y'] -= 1
+                    case 'E':
+                        if rover_pos['y'] + 1 <= outer_y_bounds:
+                            rover_pos['y'] += 1
+            case 'L':  # turn left
+                match rover_pos['dir']:
+                    case 'S':
+                        rover_pos['dir'] = 'E'
+                    case 'N':
+                        rover_pos['dir'] = 'W'
+                    case 'W':
+                        rover_pos['dir'] = 'S'
+                    case 'E':
+                        rover_pos['dir'] = 'N'
+            case 'R':  # turn right
+                match rover_pos['dir']:
+                    case 'S':
+                        rover_pos['dir'] = 'W'
+                    case 'N':
+                        rover_pos['dir'] = 'E'
+                    case 'W':
+                        rover_pos['dir'] = 'N'
+                    case 'E':
+                        rover_pos['dir'] = 'S'
+
+        x = rover_pos['x']
+        y = rover_pos['y']
+        if dig_move:
+            path[x][y] = '#'
+        else:
+            path[x][y] = '*'
+        i += 1
+
+    # if successful, send status to server
+    rover_list[rover_id]['status'] = "Finished"
+    return {"data": {"rover_map": path, "rover": rover_list[rover_id], "disarmed_mines": disarmed_mines}}
+
+
+def disarm_mine(serial_no):
+    # note: we increment pin instead of using random to make sure results are reproducible
+    # i.e. same time pin is found vs. random time generating random pins
+    pin = 0
+    success_code = '0' * 4
+    mine_key = str(pin) + serial_no
+    while not (hash_ := sha256(f'{mine_key}'.encode()).hexdigest()).startswith(success_code):
+        pin += 1
+        mine_key = str(pin) + serial_no
+
+    return pin, hash_
 
 # <----------------- old functions (to be deleted..) ------------------>
 
