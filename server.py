@@ -155,7 +155,7 @@ def get_mine_by_id(mine_id: str):
     if mine_id not in mines_list.keys():
         return {"data": "no mines found with specified ID"}
 
-    return {"mine": mine_id}
+    return {"mine": mines_list[mine_id]}
 
 
 @app.delete("/mines/{mine_id}")
@@ -231,6 +231,9 @@ def create_rover(commands: str):
 @app.get("/rovers")
 def get_rovers():
     global rover_list
+
+    if len(rover_list) == 0:
+        return {"data": 'no rovers listed'}
     
     return {'rovers': rover_list}
 
